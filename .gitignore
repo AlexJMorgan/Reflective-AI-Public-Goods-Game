@@ -1,2 +1,2 @@
 *.png
-**/pycache/
+**/__pycache__/
