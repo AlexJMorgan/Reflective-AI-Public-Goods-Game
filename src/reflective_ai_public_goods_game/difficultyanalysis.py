@@ -48,7 +48,7 @@ def runSingleExperiment(agentType, envParams, episodes=300, seed=None):
     agents = createAgents(agentType, envParams['nAgents'], **agentParams)
 
     # Initialize tracked variables
-    cooperationRates  = []
+    totalUtilities  = []
     publicGoods       = []
     interventionRates = [] if agentType == 'reflective' else None
 
@@ -81,7 +81,7 @@ def runSingleExperiment(agentType, envParams, episodes=300, seed=None):
         for agent in agents:
             agent.decayEpsilon()
 
-        cooperationRates.append(np.mean(episodeActions))
+        totalUtilities.append(env.getTotalUtility())
         publicGoods.append(env.getPublicGood())
 
         # Track intervention rate for reflective agents
@@ -91,7 +91,7 @@ def runSingleExperiment(agentType, envParams, episodes=300, seed=None):
             )
 
     return {
-        'cooperation':   cooperationRates,
+        'total_utility': totalUtilities,
         'public_goods':  publicGoods,
         'interventions': interventionRates,
         'agents':        agents,
@@ -101,7 +101,7 @@ def runSingleExperiment(agentType, envParams, episodes=300, seed=None):
 
 # Multiple replications
 def runMultipleReplications(agentType, envParams, episodes=300, nReplications=1000):
-    all_cooperation   = []
+    all_total_utilities   = []
     all_public_goods  = []
     all_interventions = [] if agentType == 'reflective' else None
 
@@ -112,7 +112,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
             print(f" {rep + 1}", end='', flush=True)
 
         results = runSingleExperiment(agentType, envParams, episodes, seed=rep)
-        all_cooperation.append(results['cooperation'])
+        all_total_utilities.append(results['total_utility'])
         all_public_goods.append(results['public_goods'])
 
         if agentType == 'reflective':
@@ -121,7 +121,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
     print(" Done!")
 
     return {
-        'cooperation':    np.array(all_cooperation),
+        'total_utility':  np.array(all_total_utilities),
         'public_goods':   np.array(all_public_goods),
         'interventions':  np.array(all_interventions) if agentType == 'reflective' else None,
         'n_replications': nReplications,
@@ -131,40 +131,34 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
 # Difficulty configurations
 def createDifficultyConfigurations():
     base_config = {
-        'nAgents':          3,
-        'initialWealth':    100.0,
-        'contributionCost': 10.0,
-        'maxSteps':         200,
+        'nAgents':        2,
+        'minimumUsage':   0.0,
+        'moderateUsage':  2.0,
+        'greedyUsage':    8.0,
+        'maxSteps':       200,
     }
 
     return {
-        # Easy configuration: slow decay, low threshold, modest replenishment.
-        'Easy': {
-            **base_config,
+        # Easy configuration: low greedy usage, higher replenishment, low threshold.
+        'Easy': base_config | {
             'initialPublicGood':       40.0,
-            'decayRate':               0.97,
-            'replenishmentRate':       1.4,
-            'benefitMultiplier':       0.15,
+            'replenishmentRate':       4.0,
+            'greedyUsage':             4.0,
             'sustainabilityThreshold': 20.0,
         },
 
-        # Medium configuration: moderate decay, higher threshold, better replenishment.
-        'Medium': {
-            **base_config,
+        # Medium configuration: average replenishment, average threshold.
+        'Medium': base_config | {
             'initialPublicGood':       50.0,
-            'decayRate':               0.92,
             'replenishmentRate':       2.5,
-            'benefitMultiplier':       0.12,
             'sustainabilityThreshold': 30.0,
         },
 
-        # Hard configuration: fast decay, high threshold, weak replenishment.
+        # Hard configuration: weak replenishment, high threshold.
         'Hard': {
             **base_config,
             'initialPublicGood':       60.0,
-            'decayRate':               0.85,
-            'replenishmentRate':       4.5,
-            'benefitMultiplier':       0.10,
+            'replenishmentRate':       1.8,
             'sustainabilityThreshold': 40.0,
         },
     }
@@ -202,22 +196,22 @@ def _drawPanel(ax, x, mean_b, std_b, mean_r, std_r,
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
 
-# Figure 1 — Cooperation Rate
-def plotCooperationRate(results, savePath='difficulty_cooperation.png'):
+# Figure 1 — TotalUtility
+def plotTotalUtility(results, savePath='difficulty_utility.png'):
     n_reps = results['Easy']['baseline']['n_replications']
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
     fig.text(0.5, 1.01,
              f'Each point averaged across {n_reps} replications (shaded area = ±1 std)',
              ha='center', va='bottom', fontsize=9, style='italic')
-    fig.suptitle('Cooperation Rate', fontweight='bold', fontsize=13, y=1.05)
+    fig.suptitle('Total Utility', fontweight='bold', fontsize=13, y=1.05)
 
     for col, difficulty in enumerate(DIFFICULTIES):
-        b = results[difficulty]['baseline']['cooperation']
-        r = results[difficulty]['reflective']['cooperation']
+        b = results[difficulty]['baseline']['total_utility']
+        r = results[difficulty]['reflective']['total_utility']
         x = np.arange(b.shape[1])
         _drawPanel(axes[col], x, b.mean(axis=0), b.std(axis=0),
                    r.mean(axis=0), r.std(axis=0),
-                   col, difficulty, 'Cooperation Rate')
+                   col, difficulty, 'Total Utility')
 
     plt.tight_layout()
     plt.savefig(savePath, dpi=300, bbox_inches='tight')
@@ -259,7 +253,7 @@ def plotInterventionRate(results, savePath='difficulty_intervention.png'):
     fig.suptitle('Intervention Rate', fontweight='bold', fontsize=13, y=1.05)
 
     for col, difficulty in enumerate(DIFFICULTIES):
-        b_shape = results[difficulty]['baseline']['cooperation']
+        b_shape = results[difficulty]['baseline']['total_utility']
         r       = results[difficulty]['reflective']['interventions']
         x       = np.arange(b_shape.shape[1])
         _drawPanel(axes[col], x, None, None,
@@ -275,7 +269,7 @@ def plotInterventionRate(results, savePath='difficulty_intervention.png'):
 
 # Wrapper to plot all figures
 def plotAllFigures(results):
-    plotCooperationRate(results,  savePath='difficulty_cooperation.png')
+    plotTotalUtility(results,  savePath='difficulty_utility.png')
     plotPublicGood(results,       savePath='difficulty_public_good.png')
     plotInterventionRate(results, savePath='difficulty_intervention.png')
 
@@ -285,8 +279,8 @@ def main():
     configs = createDifficultyConfigurations()
     results = {}
 
-    EPISODES       = 75
-    N_REPLICATIONS = 150
+    EPISODES       = 50
+    N_REPLICATIONS = 100
 
     for difficulty, config in configs.items():
         print(f"\n[{difficulty.upper()}]")
