@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import random
-from publicgoodsenv import PublicGoodsEnv
-from agents import createAgents
+from reflective_ai_public_goods_game.publicgoodsenv import PublicGoodsEnv
+from reflective_ai_public_goods_game.agents import createAgents
 
 '''
 Run experiment with varying difficulty levels.
@@ -131,7 +131,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
 # Difficulty configurations
 def createDifficultyConfigurations():
     base_config = {
-        'nAgents':          10,
+        'nAgents':          3,
         'initialWealth':    100.0,
         'contributionCost': 10.0,
         'maxSteps':         200,
@@ -145,7 +145,7 @@ def createDifficultyConfigurations():
             'decayRate':               0.97,
             'replenishmentRate':       1.4,
             'benefitMultiplier':       0.15,
-            'sustainabilityThreshold': 40.0,
+            'sustainabilityThreshold': 20.0,
         },
 
         # Medium configuration: moderate decay, higher threshold, better replenishment.
@@ -155,7 +155,7 @@ def createDifficultyConfigurations():
             'decayRate':               0.92,
             'replenishmentRate':       2.5,
             'benefitMultiplier':       0.12,
-            'sustainabilityThreshold': 50.0,
+            'sustainabilityThreshold': 30.0,
         },
 
         # Hard configuration: fast decay, high threshold, weak replenishment.
@@ -165,7 +165,7 @@ def createDifficultyConfigurations():
             'decayRate':               0.85,
             'replenishmentRate':       4.5,
             'benefitMultiplier':       0.10,
-            'sustainabilityThreshold': 60.0,
+            'sustainabilityThreshold': 40.0,
         },
     }
 
@@ -285,8 +285,8 @@ def main():
     configs = createDifficultyConfigurations()
     results = {}
 
-    EPISODES       = 300
-    N_REPLICATIONS = 1000
+    EPISODES       = 75
+    N_REPLICATIONS = 150
 
     for difficulty, config in configs.items():
         print(f"\n[{difficulty.upper()}]")
