@@ -105,6 +105,9 @@ class QLearningAgent:
             return 0.0
         recent = self.actionHistory[-window:]
         return np.mean(recent)
+
+    def getTotalReward(self) -> float:
+        return np.sum(self.rewardHistory) if self.rewardHistory is not None else 0.0
     
     def getStats(self):
         '''
@@ -118,6 +121,10 @@ class QLearningAgent:
             'epsilon': self.epsilon,
             'q_table_size': len(self.qTable)
         }
+
+    def startNewEpisode(self):
+        self.actionHistory = []
+        self.rewardHistory = []
         
 class ReflectiveAgent(QLearningAgent):
     '''
