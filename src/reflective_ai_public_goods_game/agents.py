@@ -1,6 +1,9 @@
-import numpy as np
 import random
 from collections import defaultdict
+
+import numpy as np
+
+from reflective_ai_public_goods_game.agentactions import AgentActions
 
 class QLearningAgent:
     '''
@@ -12,7 +15,6 @@ class QLearningAgent:
     def __init__(
         self,
         agentId = 0,
-        nActions = 2,
         # Learning Rate: how strongly new information updates Q-values
         alpha = 0.1,
         # Discount factor: importance of future rewards
@@ -23,7 +25,7 @@ class QLearningAgent:
         epsilonDecay = 0.995
     ):
         self.agentId = agentId
-        self.nActions = nActions
+        self.nActions = len(AgentActions)
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
@@ -38,11 +40,11 @@ class QLearningAgent:
         self.actionHistory = []
         self.rewardHistory = []
         
-    def getAction(self, state):
+    def getAction(self, state) -> AgentActions:
         '''
         Epsilon-greedy action selection
         
-        Returns: action (0 = free ride, 1 = contribute)
+        Returns: action (0 = minimal consumption, 1 = moderate consumption, 2 = greedy consumption)
         '''
         
         # Convert environment state to hashable key
@@ -56,9 +58,9 @@ class QLearningAgent:
         
         # Record actions for later analysis
         self.actionHistory.append(action)
-        return action
+        return AgentActions(action)
     
-    def update(self, state, action, reward, nextState):
+    def update(self, state, action: AgentActions, reward, nextState):
         '''
         Q-learning update using Bellman equation
         
@@ -68,16 +70,17 @@ class QLearningAgent:
         # Convert states to Q-table keys
         stateKey = self._stateToKey(state)
         nextStateKey = self._stateToKey(nextState)
+        actionKey = action.value
 
         # Estimate optimal future value
         bestNextQ = np.max(self.qTable[nextStateKey])
         
         # Compute TD target and TD error
         tdTarget = reward + self.gamma * bestNextQ
-        tdError = tdTarget - self.qTable[stateKey][action]
+        tdError = tdTarget - self.qTable[stateKey][actionKey]
         
         # Update Q-value
-        self.qTable[stateKey][action] += self.alpha * tdError
+        self.qTable[stateKey][actionKey] += self.alpha * tdError
         
         # Record reward
         self.rewardHistory.append(reward)
@@ -94,14 +97,17 @@ class QLearningAgent:
         '''
         return tuple(np.round(state, 2))
     
-    def getCooperationRate(self, window=100):
+    def getExploitationRate(self, window=100):
         '''
-        Calculate cooperation rate over recent actions
+        Calculate exploitation rate over recent actions
         '''
         if len(self.actionHistory) == 0:
             return 0.0
         recent = self.actionHistory[-window:]
         return np.mean(recent)
+
+    def getTotalReward(self) -> float:
+        return np.sum(self.rewardHistory) if self.rewardHistory is not None else 0.0
     
     def getStats(self):
         '''
@@ -110,11 +116,15 @@ class QLearningAgent:
         return {
             'agent_id': self.agentId,
             'total_actions': len(self.actionHistory),
-            'cooperation_rate': self.getCooperationRate(),
+            'consumption_rate': self.getConsumptionRate(),
             'avg_reward': np.mean(self.rewardHistory) if self.rewardHistory else 0.0,
             'epsilon': self.epsilon,
             'q_table_size': len(self.qTable)
         }
+
+    def startNewEpisode(self):
+        self.actionHistory = []
+        self.rewardHistory = []
         
 class ReflectiveAgent(QLearningAgent):
     '''
@@ -137,7 +147,6 @@ class ReflectiveAgent(QLearningAgent):
     def __init__(
         self,
         agentId = 0,
-        nActions = 2,
         alpha = 0.1,
         gamma = 0.95,
         epsilon = 1.0,
@@ -148,7 +157,6 @@ class ReflectiveAgent(QLearningAgent):
     ):
         super().__init__(
             agentId,
-            nActions,
             alpha,
             gamma,
             epsilon,
@@ -184,7 +192,7 @@ class ReflectiveAgent(QLearningAgent):
         
         # Apply override if triggered
         if shouldOverride and random.random() < self.interventionProbability:
-            finalAction = 1
+            finalAction = AgentActions.MINIMAL
             self.overrideCount += 1
             overridden = True
         else:
@@ -196,17 +204,17 @@ class ReflectiveAgent(QLearningAgent):
         
         # Correct action history if overriden
         if overridden:
-            self.actionHistory[-1] = finalAction
+            self.actionHistory[-1] = finalAction.value
             
         return finalAction, overridden
     
-    def _governorDecision(self, state, proposedAction, publicGood):
+    def _governorDecision(self, state, proposedAction: AgentActions, publicGood):
         '''
         Governor decision rule
         
         Override if:
         1. Public good is below sustainability threshold
-        2. Proposed action is to free ride (0)
+        2. Proposed action is to consume more than minimal amount (not 0)
         
         Implements the hard constraint on selfish behaviour when the resource is near collapse
         
@@ -215,7 +223,7 @@ class ReflectiveAgent(QLearningAgent):
         
         isUnsustainable = publicGood < self.sustainabilityThreshold
         
-        proposedDefection = (proposedAction == 0)
+        proposedDefection = (proposedAction != AgentActions.MINIMAL)
         
         shouldOverride = isUnsustainable and proposedDefection
         

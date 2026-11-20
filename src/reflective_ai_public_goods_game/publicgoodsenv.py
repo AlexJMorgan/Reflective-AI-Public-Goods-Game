@@ -1,56 +1,58 @@
 import numpy as np
 
+from reflective_ai_public_goods_game.agentactions import AgentActions
+
 class PublicGoodsEnv:
     '''
     Public Goods Game Environment
-    Agents start with initial wealth (tokens) and must decide whether to contribute to a public good or free ride
+    Wealth all contained in the replenishing pool, agents must decide how much to use each timestep
     '''
     
     def __init__(
         self,
         nAgents = 3,
-        initialWealth = 100.0,
-        contributionCost = 10.0,
-        initialPublicGood = 100.0,
-        decayRate = 0.98, # Proportion of the public good retained at each step
-        replenishmentRate = 8.0, # Amount added to the public good per contributing agent
-        benefitMultiplier = 0.15, # Determines how much the public good benefits agents
-        sustainabilityThreshold = 50.0,
+        minimumUsage = 0.0, # Smallest amount an agent can use in a time step
+        moderateUsage = 2.0, # Medium amount for an agent to use in a time step
+        greedyUsage = 8.0, # Large amount for an agent to use in a time step
+        initialPublicGood = 100.0, # Initial amount of public good in the shared pool
+        replenishmentRate = 8.0, # Amount added to the public good pool each time step
+        sustainabilityThreshold = 50.0, # Threshold to keep the public good total above
         maxSteps = 200 # Maximum number of steps per episode
     ):
         self.nAgents = nAgents
-        self.initialWealth = initialWealth
-        self.contributionCost = contributionCost
+        self.usageRates = {
+            AgentActions.MINIMAL: minimumUsage,
+            AgentActions.MODERATE: moderateUsage,
+            AgentActions.GREEDY: greedyUsage
+        }
         self.initialPublicGood = initialPublicGood
-        self.decayRate = decayRate
         self.replenishmentRate = replenishmentRate
-        self.benefitMultiplier = benefitMultiplier
         self.sustainabilityThreshold = sustainabilityThreshold
         self.maxSteps = maxSteps
         
         # Dynamic environment state variables
-        self.wealth = np.zeros(nAgents)
+        self.utility = np.zeros(nAgents)
         self.publicGood = 0.0
         self.stepCount = 0
         self.lastActions = np.zeros(nAgents)
         
         # History tracking for analysis
         self.publicGoodHistory = []
-        self.wealthHistory = []
-        self.contributionHistory = []
+        self.utilityHistory = []
+        self.consumptionHistory = []
         
     def reset(self):
         '''
         Start a new episode
         '''
         self.stepCount = 0
-        self.wealth = np.full(self.nAgents, self.initialWealth)
+        self.utility = np.zeros(self.nAgents)
         self.publicGood = self.initialPublicGood
         self.lastActions = np.zeros(self.nAgents)
         
         self.publicGoodHistory = [self.publicGood]
-        self.wealthHistory = [self.wealth.copy()]
-        self.contributionHistory = []
+        self.utilityHistory = [self.utility.copy()]
+        self.consumptionHistory = []
         
         return self._getState()
     
@@ -58,7 +60,7 @@ class PublicGoodsEnv:
         '''
         Execute one time step of the environment
         
-        Actions: array of size nAgents, where each element is 1 (contribute) or 0 (free ride)
+        Actions: array of size nAgents, where each element is an AgentActions value
         Returns: nextState, rewards, done, info
         '''
         
@@ -66,40 +68,32 @@ class PublicGoodsEnv:
         actions = np.array(actions)
         self.lastActions = actions
         
-        # Counting how many agents contributed this step
-        numContributing = np.sum(actions)
-        self.contributionHistory.append(numContributing)
+        # Count how much resource was used this step
+        usageCosts = actions.copy()
+        for action in self.usageRates:
+            usageCosts[usageCosts == action] = self.usageRates[action]
+        usageCosts = np.astype(usageCosts, np.float64)
+        totalUsage = np.sum(usageCosts)
+        self.consumptionHistory.append(totalUsage)
         
-        # Update public good: decay and replenishment from contributions
-        self.publicGood = (self.decayRate * self.publicGood) + (self.replenishmentRate * numContributing)
+        # Update public good: replenishment and consumption
+        self.publicGood = self.publicGood + self.replenishmentRate - totalUsage
         
-        # Health factor scales benefits when resource is degraded
-        healthFactor = min(1.0, self.publicGood / self.sustainabilityThreshold)
+        # # Health factor scales benefits when resource is degraded- Disabled
+        # healthFactor = min(1.0, self.publicGood / self.sustainabilityThreshold)
         
-        # Shared benefit received by all agents
-        benefit = self.benefitMultiplier * healthFactor * self.publicGood
+        # # Shared benefit received by all agents
+        # benefit = self.benefitMultiplier * healthFactor * self.publicGood
         
         rewards = np.zeros(self.nAgents)
         
         # Update individual agent wealth and compute rewards
-        for i in range(self.nAgents):
-            oldWealth = self.wealth[i]
-            
-            if actions[i] == 1:
-                # Contributors pay a cost but receive the shared benefit
-                self.wealth[i] = self.wealth[i] - self.contributionCost + benefit
-            else:
-                # Free riders receive benefit without paying cost
-                self.wealth[i] = self.wealth[i] + benefit
-            
-            # Reward is change in wealth
-            rewards[i] = self.wealth[i] - oldWealth
-            # Wealth is lower-bounded at zero
-            self.wealth[i] = max(0.0, self.wealth[i])
+        self.utility += usageCosts
+        rewards = usageCosts
     
         # Record histories for analysis
         self.publicGoodHistory.append(self.publicGood)
-        self.wealthHistory.append(self.wealth.copy())
+        self.utilityHistory.append(self.utility.copy())
         
         # Check for collapse condition
         collapsed = self.publicGood < (self.sustainabilityThreshold * 0.2)
@@ -111,13 +105,11 @@ class PublicGoodsEnv:
         
         info = {
             'publicGood': self.publicGood,
-            'numContributing': numContributing,
-            'avgWealth': np.mean(self.wealth),
-            'totalWealth': np.sum(self.wealth),
+            'totalUsage': totalUsage,
+            'avgUtility': np.mean(self.utility),
+            'totalUtility': np.sum(self.utility),
             'isSustainable': self.publicGood >= self.sustainabilityThreshold,
             'collapsed': collapsed,
-            'benefit': benefit,
-            'healthFactor': healthFactor
         }
         return nextState, rewards, done, info
     
@@ -125,20 +117,20 @@ class PublicGoodsEnv:
         '''
         State representation for agents
         
-        Returns: [normalizedPublicGood, avgContributions]
+        Returns: [normalizedPublicGood, avgConsumptions]
         '''
         
         # Normalise public good relative to initial value
         normalizedPublicGood = self.publicGood / self.initialPublicGood
         
-        # Compute average recent contribution rate
-        if len(self.contributionHistory) > 0:
-            recentWindow = min(10, len(self.contributionHistory))
-            avgContributions = np.mean(self.contributionHistory[-recentWindow:]) / self.nAgents
+        # Compute average recent consumption rate
+        if len(self.consumptionHistory) > 0:
+            recentWindow = min(10, len(self.consumptionHistory))
+            avgConsumptions = np.mean(self.consumptionHistory[-recentWindow:]) / self.nAgents
         else:
-            avgContributions = 0.0
+            avgConsumptions = 0.0
         
-        return np.array([normalizedPublicGood, avgContributions])
+        return np.array([normalizedPublicGood, avgConsumptions])
     
     def getAgentState(self, agentId):
         '''
@@ -146,11 +138,9 @@ class PublicGoodsEnv:
         Shared state and agent-specific wealth
         '''
         
-        sharedState = self._getState()
-        
-        normalizedWealth = self.wealth[agentId] / self.initialWealth
-        
-        return np.array([sharedState[0], sharedState[1], normalizedWealth])
+        normalisedPublicGood, avgConsumptions = self._getState()
+    
+        return np.array([normalisedPublicGood, avgConsumptions, self.utility[agentId]])
     
     def isSustainable(self):
         '''
@@ -163,6 +153,12 @@ class PublicGoodsEnv:
         Get current public good value
         '''
         return self.publicGood
+
+    def getTotalUtility(self):
+        '''
+        Get current total utility of agents
+        '''
+        return np.sum(self.utility)
     
     def getMetrics(self):
         '''
@@ -170,11 +166,11 @@ class PublicGoodsEnv:
         '''
         return {
             'final_public_good': self.publicGood,
-            'avg_final_wealth': np.mean(self.wealth),
-            'total_wealth': np.sum(self.wealth),
+            'avg_final_utiltiy': np.mean(self.utility),
+            'total_utiltiy': np.sum(self.utiltiy),
             'steps_survived': self.stepCount,
-            'avg_contributions': np.mean(self.contributionHistory) if self.contributionHistory else 0.0,
+            'avg_consumption': np.mean(self.consumptionHistory) if self.consumptionHistory else 0.0,
             'public_good_history': self.publicGoodHistory,
-            'wealth_history': self.wealthHistory,
-            'contribution_history': self.contributionHistory
+            'utiltiy_history': self.utilityHistory,
+            'consumption_history': self.consumptionHistory
         }
