@@ -159,7 +159,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
 # Difficulty configurations
 def createDifficultyConfigurations():
     base_config = {
-        'nAgents':        2,
+        'nAgents':        3,
         'minimumUsage':   0.0,
         'moderateUsage':  2.0,
         'greedyUsage':    8.0,
@@ -170,7 +170,7 @@ def createDifficultyConfigurations():
         # Easy configuration: low greedy usage, higher replenishment, low threshold.
         'Easy': base_config | {
             'initialPublicGood':       40.0,
-            'replenishmentRate':       4.0,
+            'replenishmentRate':       6.0,
             'greedyUsage':             4.0,
             'sustainabilityThreshold': 20.0,
         },
@@ -178,7 +178,7 @@ def createDifficultyConfigurations():
         # Medium configuration: average replenishment, average threshold.
         'Medium': base_config | {
             'initialPublicGood':       50.0,
-            'replenishmentRate':       2.5,
+            'replenishmentRate':       4.0,
             'sustainabilityThreshold': 30.0,
         },
 
@@ -186,7 +186,7 @@ def createDifficultyConfigurations():
         'Hard': {
             **base_config,
             'initialPublicGood':       60.0,
-            'replenishmentRate':       1.8,
+            'replenishmentRate':       2.4,
             'sustainabilityThreshold': 40.0,
         },
     }
