@@ -1,5 +1,6 @@
 import random
 from collections import defaultdict
+from typing import override
 
 import numpy as np
 
@@ -148,15 +149,17 @@ class ReflectiveAgent(QLearningAgent):
     
     def __init__(
         self,
-        agentId = 0,
-        alpha = 0.1,
-        gamma = 0.95,
-        epsilon = 1.0,
-        epsilonMin = 0.01,
-        epsilonDecay = 0.995,
-        sustainabilityThreshold = 50.0,
-        interventionProbability = 1.0,
-        confidenceStep = 0.2
+        opponentTrackingPoints: list[float],
+        agentId: int = 0,
+        alpha: float = 0.1,
+        gamma: float = 0.95,
+        epsilon: float = 1.0,
+        epsilonMin: float = 0.01,
+        epsilonDecay: float = 0.995,
+        sustainabilityThreshold: float = 50.0,
+        interventionProbability: float = 1.0,
+        opponentTrackingStep: float = 0.5,
+        confidenceStep: float = 0.2
     ):
         super().__init__(
             agentId,
@@ -177,9 +180,11 @@ class ReflectiveAgent(QLearningAgent):
         self.interventionHistory = []
         self.overrideCount = 0
 
+        # ToM level 0 model of opponents
+        self.opponentTrackingPoints = {k:0 for k in sorted(opponentTrackingPoints)}
+        self.opponentTrackingStep = opponentTrackingStep
+
         # Maintain predictions of other agent behaviour
-        self.otherAgentAverageConsumption = None
-        self.nOtherAgentSamples = 0
         self.tom1Confidence = 0
         self.confidenceStep = confidenceStep
         
@@ -230,9 +235,9 @@ class ReflectiveAgent(QLearningAgent):
         Returns: True if override, False to approve
         '''
 
-        group_prediction = self._predictGroupAction(state)
+        opponent_prediction = self._predictOpponentAction(state)
         
-        isUnsustainable = state.goodsLevel - (state.usageRates[proposedAction] + group_prediction) < self.sustainabilityThreshold
+        isUnsustainable = state.goodsLevel - (state.usageRates[proposedAction] + opponent_prediction) < self.sustainabilityThreshold
         
         proposedDefection = (proposedAction != AgentActions.MINIMAL)
         
@@ -240,12 +245,69 @@ class ReflectiveAgent(QLearningAgent):
         
         return shouldOverride
 
-    def _predictGroupAction(self, state: PublicGoodsState) -> float:
+    def _predictOpponentAction(self, state: PublicGoodsState) -> float:
         '''
         Predict the combined action of the other agents
         '''
-        return 0
+        # Find which two tracked points the goodsLevel falls between
+        trackedPoints = sorted(self.opponentTrackingPoints)
+        currentPoolLevel = state.goodsLevel
 
+        if trackedPoints[0] > currentPoolLevel:
+            return self.opponentTrackingPoints[trackedPoints[0]] # If goods level below all tracked, return lowest tracked value
+        else:
+            point_idx = 0
+            while (point_idx := point_idx + 1) < len(trackedPoints):
+                if trackedPoints[point_idx] > currentPoolLevel:
+                    lower_point = trackedPoints[point_idx-1]
+                    upper_point = trackedPoints[point_idx]
+                    break
+            else: # If the while loop finished without breaking
+                return self.opponentTrackingPoints[trackedPoints[-1]] # If goods level above all tracked, return highest tracked value
+
+        lower_action, upper_action = self.opponentTrackingPoints[lower_point], self.opponentTrackingPoints[upper_point]
+        weightingToLow = (currentPoolLevel - lower_point)/(upper_point - lower_point)
+        return self.opponentTrackingPoints[lower_point] + weightingToLow*(upper_action-lower_action)
+
+    @override
+    def update(self, state: PublicGoodsState, action: AgentActions, reward, nextState: PublicGoodsState):
+        super().update(state, action, reward, nextState)
+        self._updateOpponentPrediction(state, action, nextState)
+
+
+    def _updateOpponentPrediction(self, state: PublicGoodsState, action: AgentActions, new_state: PublicGoodsState):
+        total_usage = new_state.lastConsumption
+        opponent_usage = total_usage - state.usageRates[action]
+        previous_level = state.goodsLevel
+
+        # Identify which tracked points to update
+        tracked_points = sorted(self.opponentTrackingPoints)
+        extreme = False
+        if tracked_points[0] > previous_level:
+            extreme = True
+            extreme_point = tracked_points[0]
+        else:
+            point_idx = 0
+            while (point_idx := point_idx + 1) < len(tracked_points):
+                if tracked_points[point_idx] > previous_level:
+                    lower_point = tracked_points[point_idx-1]
+                    upper_point = tracked_points[point_idx]
+                    break
+            else: # If the while loop finished without breaking
+                extreme = True
+                extreme_point = tracked_points[-1]
+
+        # Update tracked points
+        if extreme is False:
+            lower_action, upper_action = self.opponentTrackingPoints[lower_point], self.opponentTrackingPoints[upper_point]
+            lower_error = ((previous_level - lower_point)/(upper_point - lower_point)) * (opponent_usage - lower_action)
+            upper_error = ((upper_point - previous_level)/(upper_point - lower_point)) * (opponent_usage - upper_action)
+            self.opponentTrackingPoints[lower_point] += self.opponentTrackingStep * lower_error
+            self.opponentTrackingPoints[upper_point] += self.opponentTrackingStep * upper_error
+        else:
+            extreme_action = self.opponentTrackingPoints[extreme_point]
+            extreme_error = opponent_usage - extreme_action
+            self.opponentTrackingPoints[extreme_point] += self.opponentTrackingStep * extreme_error
 
     def getInterventionRate(self, window = 100):
         '''
@@ -269,6 +331,25 @@ class ReflectiveAgent(QLearningAgent):
         })
         return baseStats
 
+    @staticmethod
+    def getOpponentTrackingPointsFromUsageCosts(usageCosts: dict[AgentActions, float], sustainability_threshold: float) -> list[float]:
+        '''
+        Given the usage costs of an environment, return recommended pool levels to track opponent actions at
+        Returns levels ordered in a list, without duplicates
+        '''
+        return sorted(list({
+            sustainability_threshold -       usageCosts[AgentActions.MINIMAL],
+            sustainability_threshold - 0.5 * usageCosts[AgentActions.MINIMAL],
+            sustainability_threshold,
+            sustainability_threshold + 0.5 * usageCosts[AgentActions.MINIMAL],
+            sustainability_threshold +       usageCosts[AgentActions.MINIMAL],
+            sustainability_threshold + 2   * usageCosts[AgentActions.MINIMAL],
+            sustainability_threshold +       usageCosts[AgentActions.MODERATE],
+            sustainability_threshold + 2   * usageCosts[AgentActions.MODERATE],
+            sustainability_threshold +       usageCosts[AgentActions.GREEDY],
+            sustainability_threshold + 2   * usageCosts[AgentActions.GREEDY]
+        }))
+
 def createAgents(agentType, nAgents, **kwargs):
     '''
     Function to create multiple agents of specified type (baseline or reflective)
@@ -279,6 +360,8 @@ def createAgents(agentType, nAgents, **kwargs):
     if agentType.lower() == 'baseline':
         return [QLearningAgent(agentId=i, **kwargs) for i in range(nAgents)]
     elif agentType.lower() == 'reflective':
+        if "opponentTrackingPoints" not in kwargs:
+            raise KeyError("Must supply an 'opponentTrackingPoints' list in the kwargs to create reflective agents")
         return [ReflectiveAgent(agentId=i, **kwargs) for i in range(nAgents)]
     else:
         raise ValueError(f"Unknown agent type: {agentType}")

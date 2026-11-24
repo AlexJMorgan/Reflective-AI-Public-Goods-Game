@@ -4,9 +4,10 @@ from reflective_ai_public_goods_game.agentactions import AgentActions
 
 
 class PublicGoodsState:
-    def __init__(self, goodsLevel: float, averageConsumptions: float, usageRates: dict[AgentActions, float]):
+    def __init__(self, goodsLevel: float, averageConsumptions: float, lastConsumption: float, usageRates: dict[AgentActions, float]):
         self.goodsLevel = goodsLevel
         self.averageConsumptions = averageConsumptions
+        self.lastConsumption = lastConsumption
         self.usageRates = usageRates
 
 
@@ -131,14 +132,16 @@ class PublicGoodsEnv:
         # Normalise public good relative to initial value
         normalizedPublicGood = self.publicGood / self.initialPublicGood
         
-        # Compute average recent consumption rate
+        # Compute average recent consumption rate and get last total consumption
         if len(self.consumptionHistory) > 0:
             recentWindow = min(10, len(self.consumptionHistory))
             avgConsumptions = np.mean(self.consumptionHistory[-recentWindow:]) / self.nAgents
+            lastConsumption = self.consumptionHistory[-1]
         else:
             avgConsumptions = 0.0
+            lastConsumption = 0.0
         
-        return PublicGoodsState(goodsLevel=self.publicGood, averageConsumptions=avgConsumptions, usageRates=self.usageRates)
+        return PublicGoodsState(goodsLevel=self.publicGood, averageConsumptions=avgConsumptions, lastConsumption=lastConsumption, usageRates=self.usageRates)
     
     def getAgentState(self, agentId):
         '''

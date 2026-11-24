@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 
 from reflective_ai_public_goods_game.publicgoodsenv import PublicGoodsEnv
-from reflective_ai_public_goods_game.agents import createAgents, QLearningAgent
+from reflective_ai_public_goods_game.agents import createAgents, QLearningAgent, ReflectiveAgent
 
 '''
 Run experiment with varying difficulty levels.
@@ -87,6 +87,9 @@ def runSingleExperiment(agentType, envParams, episodes=300, seed=None):
         agentParams['epsilonDecay'] = 0.990
         agentParams['sustainabilityThreshold'] = envParams['sustainabilityThreshold']
         agentParams['interventionProbability'] = 1.0
+        agentParams['opponentTrackingPoints'] = ReflectiveAgent.getOpponentTrackingPointsFromUsageCosts(
+            usageCosts=env.usageRates, sustainability_threshold=envParams['sustainabilityThreshold']
+        )
 
     # Create agents
     agents = createAgents(agentType, envParams['nAgents'], **agentParams)
