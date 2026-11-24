@@ -4,6 +4,7 @@ from collections import defaultdict
 import numpy as np
 
 from reflective_ai_public_goods_game.agentactions import AgentActions
+from reflective_ai_public_goods_game.publicgoodsenv import PublicGoodsState
 
 class QLearningAgent:
     '''
@@ -40,7 +41,7 @@ class QLearningAgent:
         self.actionHistory = []
         self.rewardHistory = []
         
-    def getAction(self, state) -> AgentActions:
+    def getAction(self, state: PublicGoodsState) -> AgentActions:
         '''
         Epsilon-greedy action selection
         
@@ -60,7 +61,7 @@ class QLearningAgent:
         self.actionHistory.append(action)
         return AgentActions(action)
     
-    def update(self, state, action: AgentActions, reward, nextState):
+    def update(self, state: PublicGoodsState, action: AgentActions, reward, nextState: PublicGoodsState):
         '''
         Q-learning update using Bellman equation
         
@@ -91,11 +92,12 @@ class QLearningAgent:
         '''
         self.epsilon = max(self.epsilonMin, self.epsilon * self.epsilonDecay)
         
-    def _stateToKey(self, state):
+    def _stateToKey(self, state: PublicGoodsState):
         '''
         Convert state to a hashable key for Q-table
         '''
-        return tuple(np.round(state, 2))
+        stateArray = np.array([state.goodsLevel, state.averageConsumptions])
+        return tuple(np.round(stateArray, 2))
     
     def getExploitationRate(self, window=100):
         '''
@@ -154,6 +156,7 @@ class ReflectiveAgent(QLearningAgent):
         epsilonDecay = 0.995,
         sustainabilityThreshold = 50.0,
         interventionProbability = 1.0,
+        confidenceStep = 0.2
     ):
         super().__init__(
             agentId,
@@ -173,8 +176,14 @@ class ReflectiveAgent(QLearningAgent):
         # Track governance behaviour
         self.interventionHistory = []
         self.overrideCount = 0
+
+        # Maintain predictions of other agent behaviour
+        self.otherAgentAverageConsumption = None
+        self.nOtherAgentSamples = 0
+        self.tom1Confidence = 0
+        self.confidenceStep = confidenceStep
         
-    def getActionWithReflection(self, state, publicGood):
+    def getActionWithReflection(self, state: PublicGoodsState, publicGood):
         '''
         Two-stage action selection with reflective governor
         
@@ -188,7 +197,7 @@ class ReflectiveAgent(QLearningAgent):
         proposedAction = self.getAction(state)
         
         # Governor evaluates the proposed action
-        shouldOverride = self._governorDecision(state, proposedAction, publicGood)
+        shouldOverride = self._governorDecision(state, proposedAction)
         
         # Apply override if triggered
         if shouldOverride and random.random() < self.interventionProbability:
@@ -208,26 +217,35 @@ class ReflectiveAgent(QLearningAgent):
             
         return finalAction, overridden
     
-    def _governorDecision(self, state, proposedAction: AgentActions, publicGood):
+    def _governorDecision(self, state: PublicGoodsState, proposedAction: AgentActions):
         '''
         Governor decision rule
         
         Override if:
-        1. Public good is below sustainability threshold
+        1. Proposed action and predicted actions of others would take public goods below sustainable threshold
         2. Proposed action is to consume more than minimal amount (not 0)
         
         Implements the hard constraint on selfish behaviour when the resource is near collapse
         
         Returns: True if override, False to approve
         '''
+
+        group_prediction = self._predictGroupAction(state)
         
-        isUnsustainable = publicGood < self.sustainabilityThreshold
+        isUnsustainable = state.goodsLevel - (state.usageRates[proposedAction] + group_prediction) < self.sustainabilityThreshold
         
         proposedDefection = (proposedAction != AgentActions.MINIMAL)
         
         shouldOverride = isUnsustainable and proposedDefection
         
         return shouldOverride
+
+    def _predictGroupAction(self, state: PublicGoodsState) -> float:
+        '''
+        Predict the combined action of the other agents
+        '''
+        return 0
+
 
     def getInterventionRate(self, window = 100):
         '''

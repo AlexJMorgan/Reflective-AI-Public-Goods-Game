@@ -2,6 +2,14 @@ import numpy as np
 
 from reflective_ai_public_goods_game.agentactions import AgentActions
 
+
+class PublicGoodsState:
+    def __init__(self, goodsLevel: float, averageConsumptions: float, usageRates: dict[AgentActions, float]):
+        self.goodsLevel = goodsLevel
+        self.averageConsumptions = averageConsumptions
+        self.usageRates = usageRates
+
+
 class PublicGoodsEnv:
     '''
     Public Goods Game Environment
@@ -47,7 +55,7 @@ class PublicGoodsEnv:
         '''
         self.stepCount = 0
         self.utility = np.zeros(self.nAgents)
-        self.publicGood = self.initialPublicGood
+        self.publicGood = self.initialPublicGood 
         self.lastActions = np.zeros(self.nAgents)
         
         self.publicGoodHistory = [self.publicGood]
@@ -56,7 +64,7 @@ class PublicGoodsEnv:
         
         return self._getState()
     
-    def step(self, actions):
+    def step(self, actions) -> tuple[PublicGoodsState, np.ndarray, bool, dict]:
         '''
         Execute one time step of the environment
         
@@ -113,11 +121,11 @@ class PublicGoodsEnv:
         }
         return nextState, rewards, done, info
     
-    def _getState(self):
+    def _getState(self) -> PublicGoodsState:
         '''
         State representation for agents
         
-        Returns: [normalizedPublicGood, avgConsumptions]
+        Returns: PublicGoodsState
         '''
         
         # Normalise public good relative to initial value
@@ -130,7 +138,7 @@ class PublicGoodsEnv:
         else:
             avgConsumptions = 0.0
         
-        return np.array([normalizedPublicGood, avgConsumptions])
+        return PublicGoodsState(goodsLevel=self.publicGood, averageConsumptions=avgConsumptions, usageRates=self.usageRates)
     
     def getAgentState(self, agentId):
         '''

@@ -36,6 +36,7 @@ def runSingleEpisode(
     if tracking_stats is True:
         running_agent_utilities: list[list[float]] = []
         running_total_utility: list[float] = []
+        running_resource_pool: list[float] = []
     while not done:
         actions = []
         for agent in agents:
@@ -52,13 +53,15 @@ def runSingleEpisode(
         for i, agent in enumerate(agents):
             agent.update(state, actions[i], rewards[i], nextState)
 
-        state = nextState
+
         if tracking_stats is True:
             running_agent_utilities.append([agent.getTotalReward() for agent in agents])
             running_total_utility.append(env.getTotalUtility())
+            running_resource_pool.append(state.goodsLevel)
+        state = nextState
     if tracking_stats is True:
         running_agent_utilities_arr = np.array(running_agent_utilities).transpose()
-        return running_agent_utilities_arr, np.array(running_total_utility)
+        return running_agent_utilities_arr, np.array(running_resource_pool), np.array(running_total_utility)
 
 
 # Single experiment
@@ -140,7 +143,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
             all_interventions.append(results['interventions'])
 
         if rep == nReplications-1:
-            episode_agent_utility, episode_total_utility = runSingleEpisode(
+            episode_agent_utility, episode_resource_level, episode_total_utility = runSingleEpisode(
                 env=results['env'], agents=results['agents'], agentType=agentType, tracking_stats=True
             )
 
@@ -151,6 +154,7 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
         'public_goods':          np.array(all_public_goods),
         'interventions':         np.array(all_interventions) if agentType == 'reflective' else None,
         'episode_agent_utility': episode_agent_utility,
+        'episode_resource_level': episode_resource_level,
         'episode_total_utility': episode_total_utility,
         'n_replications':        nReplications,
     }
@@ -305,14 +309,20 @@ def plotSingleEpisodeAgentUtility(results, savePath='difficulty_episode_agent_ut
 
         baseline_results = results[difficulty]['baseline']['episode_agent_utility']
         reflective_results = results[difficulty]['reflective']['episode_agent_utility']
-        longest_episode = max(baseline_results.shape[1], reflective_results.shape[1])
+        baseline_resource = results[difficulty]['baseline']['episode_resource_level']
+        reflective_resource = results[difficulty]['reflective']['episode_resource_level']
+        longest_episode = max(baseline_results.shape[1], reflective_results.shape[1], len(baseline_resource), len(reflective_resource))
         padded_baseline_results = np.pad(baseline_results, ((0,0),(0,longest_episode-baseline_results.shape[1])), 'edge')
         padded_reflective_results = np.pad(reflective_results, ((0,0),(0,longest_episode-reflective_results.shape[1])), 'edge')
+        padded_baseline_resource = np.pad(baseline_resource, (0,longest_episode-len(baseline_resource)), 'edge')
+        padded_reflective_resource = np.pad(reflective_resource, (0,longest_episode-len(reflective_resource)), 'edge')
 
         for i, agent_results in enumerate(padded_baseline_results):
             ax.plot(agent_results, linestyle='dashed', label=f'Baseline agent {i}')
+        ax.plot(padded_baseline_resource, linestyle='dashed', label=f'Baseline resource level')
         for i, agent_results in enumerate(padded_reflective_results):
             ax.plot(agent_results, linestyle='solid', label=f'Reflective agent {i}')
+        ax.plot(padded_reflective_resource, linestyle='solid', label=f'Reflective resource level')
         ax.set_title(difficulty, fontweight='bold', fontsize=12)
         ax.set_xlabel('Timestep', fontsize=10)
         if col == 0:
