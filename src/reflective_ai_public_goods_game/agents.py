@@ -181,6 +181,7 @@ class ReflectiveAgent(QLearningAgent):
         # Track governance behaviour
         self.interventionHistory = []
         self.overrideCount = 0
+        self.lastPrediction: float | None = None
 
         # ToM level 0 model of opponents
         self.opponentTrackingPoints = {k:0.0 for k in sorted(opponentTrackingPoints)}
@@ -289,6 +290,9 @@ class ReflectiveAgent(QLearningAgent):
         toM1PredictionOfOppAction = self.getAction(mockToM1State, record_history=False)
         toM1PredictionOfOppTotal = state.usageRates[toM1PredictionOfOppAction] * (state.nAgents-1)
         weightedToM1Prediction = toM0PredictionOfOpp + confidence*(toM1PredictionOfOppTotal - toM0PredictionOfOpp)
+        self.lastToM0Prediction = toM0PredictionOfOpp
+        self.lastToM1Prediction = toM1PredictionOfOppTotal
+        self.lastPrediction = weightedToM1Prediction
         return weightedToM1Prediction
 
 

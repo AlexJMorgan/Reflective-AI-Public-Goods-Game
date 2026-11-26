@@ -37,6 +37,7 @@ def runSingleEpisode(
         running_agent_utilities: list[list[float]] = []
         running_total_utility: list[float] = []
         running_resource_pool: list[float] = []
+        running_agent_predictions: dict[list[float]] = {k: [] for k in ("tom0", "tom1", "weighted", "truth", "confidence")}
     while not done:
         actions = []
         for agent in agents:
@@ -58,10 +59,21 @@ def runSingleEpisode(
             running_agent_utilities.append([agent.getTotalReward() for agent in agents])
             running_total_utility.append(env.getTotalUtility())
             running_resource_pool.append(state.goodsLevel)
+            if agentType == "reflective":
+                running_agent_predictions["tom0"].append(agents[0].lastToM0Prediction if agents[0].lastToM0Prediction is not None else np.nan)
+                running_agent_predictions["tom1"].append(agents[0].lastToM1Prediction if agents[0].lastToM1Prediction is not None else np.nan)
+                running_agent_predictions["weighted"].append(agents[0].lastPrediction if agents[0].lastPrediction is not None else np.nan)
+                running_agent_predictions["truth"].append(nextState.lastConsumption - nextState.usageRates[actions[0]])
+                running_agent_predictions["confidence"].append(agents[0].toM1Confidence)
         state = nextState
     if tracking_stats is True:
         running_agent_utilities_arr = np.array(running_agent_utilities).transpose()
-        return running_agent_utilities_arr, np.array(running_resource_pool), np.array(running_total_utility)
+        return {
+            "running_agent_utilities": running_agent_utilities_arr,
+            "running_pool": np.array(running_resource_pool),
+            "running_total_utility": np.array(running_total_utility),
+            "running_predictions": {k: np.array(v) for k,v in running_agent_predictions.items()}
+        }
 
 
 # Single experiment
@@ -146,20 +158,21 @@ def runMultipleReplications(agentType, envParams, episodes=300, nReplications=10
             all_interventions.append(results['interventions'])
 
         if rep == nReplications-1:
-            episode_agent_utility, episode_resource_level, episode_total_utility = runSingleEpisode(
+            episode_stats = runSingleEpisode(
                 env=results['env'], agents=results['agents'], agentType=agentType, tracking_stats=True
             )
 
     print(" Done!")
 
     return {
-        'total_utility':         np.array(all_total_utilities),
-        'public_goods':          np.array(all_public_goods),
-        'interventions':         np.array(all_interventions) if agentType == 'reflective' else None,
-        'episode_agent_utility': episode_agent_utility,
-        'episode_resource_level': episode_resource_level,
-        'episode_total_utility': episode_total_utility,
-        'n_replications':        nReplications,
+        'total_utility':          np.array(all_total_utilities),
+        'public_goods':           np.array(all_public_goods),
+        'interventions':          np.array(all_interventions) if agentType == 'reflective' else None,
+        'episode_agent_utility':  episode_stats["running_agent_utilities"],
+        'episode_resource_level': episode_stats["running_pool"],
+        'episode_total_utility':  episode_stats["running_total_utility"],
+        'episode_predictions':    episode_stats["running_predictions"],
+        'n_replications':         nReplications,
     }
 
 
@@ -352,6 +365,39 @@ def plotSingleEpisodeTotalUtility(results, savePath='difficuly_episode_total_uti
     plt.savefig(savePath, dpi=300, bbox_inches='tight')
     print(f"Saved → {savePath}")
     plt.close(fig)
+
+
+def plotSingleEpisodePredictions(results, savePath='difficulty_episode_predictions.png'):
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+    fig.suptitle('Single Episode Agent 0 Predictions', fontweight='bold', fontsize=13, y=1.05)
+
+    secondary_axes = []
+    for col, difficulty in enumerate(DIFFICULTIES):
+        ax = axes[col]
+        ax2 = ax.twinx()
+        secondary_axes.append(ax2)
+        prediction_results = results[difficulty]['reflective']['episode_predictions']
+        # ax.plot(prediction_results["tom0"], linestyle='solid', label='0th Order Prediction')
+        # ax.plot(prediction_results["tom1"], linestyle='solid', label='Base 1st Order Prediction')
+        ax.plot(prediction_results["weighted"], color='tab:blue', marker='.', linestyle='none', label='Final Prediction')
+        ax.plot(prediction_results["truth"], color='tab:orange', marker='.', linestyle='none', label='True Usage')
+        ax2.plot(prediction_results["confidence"], color='tab:green', linestyle='solid', label='Confidence')
+        ax.set_title(difficulty, fontweight='bold', fontsize=12)
+        ax.set_xlabel('Timestep', fontsize=10)
+        if col == 0:
+            ax.set_ylabel('Resource Usage', fontweight='bold', fontsize=11)
+        if col == len(DIFFICULTIES) - 1:
+            ax2.set_ylabel('Confidence', fontweight='bold', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        lns, labs = ax.get_legend_handles_labels()
+        lns2, labs2 = ax2.get_legend_handles_labels()
+        ax.legend(lns+lns2, labs+labs2, fontsize=8)
+    for ax in secondary_axes[1:]:
+        ax.sharey(secondary_axes[0])
+    plt.tight_layout()
+    plt.savefig(savePath, dpi=300, bbox_inches='tight')
+    print(f"Saved → {savePath}")
+    plt.close(fig)
     
 
 # Wrapper to plot all figures
@@ -361,6 +407,7 @@ def plotAllFigures(results):
     plotInterventionRate(results,          savePath='difficulty_intervention.png')
     plotSingleEpisodeTotalUtility(results, savePath='difficulty_episode_total_utility.png')
     plotSingleEpisodeAgentUtility(results, savePath='difficulty_episode_agent_utility.png')
+    plotSingleEpisodePredictions(results,  savePath='difficulty_episode_predictions.png')
 
 # Main function to run all experiments and generate figures
 def main():
