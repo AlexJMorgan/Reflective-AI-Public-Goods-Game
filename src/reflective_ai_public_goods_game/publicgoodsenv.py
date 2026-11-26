@@ -4,11 +4,19 @@ from reflective_ai_public_goods_game.agentactions import AgentActions
 
 
 class PublicGoodsState:
-    def __init__(self, goodsLevel: float, averageConsumptions: float, lastConsumption: float, usageRates: dict[AgentActions, float]):
+    def __init__(
+            self,
+            goodsLevel: float,
+            averageConsumptions: float,
+            lastConsumption: float,
+            usageRates: dict[AgentActions, float],
+            nAgents: int
+        ):
         self.goodsLevel = goodsLevel
         self.averageConsumptions = averageConsumptions
         self.lastConsumption = lastConsumption
         self.usageRates = usageRates
+        self.nAgents = nAgents
 
 
 class PublicGoodsEnv:
@@ -141,7 +149,13 @@ class PublicGoodsEnv:
             avgConsumptions = 0.0
             lastConsumption = 0.0
         
-        return PublicGoodsState(goodsLevel=self.publicGood, averageConsumptions=avgConsumptions, lastConsumption=lastConsumption, usageRates=self.usageRates)
+        return PublicGoodsState(
+            goodsLevel=self.publicGood,
+            averageConsumptions=avgConsumptions,
+            lastConsumption=lastConsumption,
+            usageRates=self.usageRates,
+            nAgents=self.nAgents
+        )
     
     def getAgentState(self, agentId):
         '''

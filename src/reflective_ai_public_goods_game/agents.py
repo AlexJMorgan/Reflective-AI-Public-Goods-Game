@@ -1,5 +1,6 @@
 import random
 from collections import defaultdict
+from copy import copy
 from typing import override
 
 import numpy as np
@@ -42,7 +43,7 @@ class QLearningAgent:
         self.actionHistory = []
         self.rewardHistory = []
         
-    def getAction(self, state: PublicGoodsState) -> AgentActions:
+    def getAction(self, state: PublicGoodsState, record_history: bool = True) -> AgentActions:
         '''
         Epsilon-greedy action selection
         
@@ -59,7 +60,8 @@ class QLearningAgent:
             action = int(np.argmax(self.qTable[stateKey]))
         
         # Record actions for later analysis
-        self.actionHistory.append(action)
+        if record_history is True:
+            self.actionHistory.append(action)
         return AgentActions(action)
     
     def update(self, state: PublicGoodsState, action: AgentActions, reward, nextState: PublicGoodsState):
@@ -158,7 +160,7 @@ class ReflectiveAgent(QLearningAgent):
         epsilonDecay: float = 0.995,
         sustainabilityThreshold: float = 50.0,
         interventionProbability: float = 1.0,
-        opponentTrackingStep: float = 0.5,
+        trackingStep: float = 0.5,
         confidenceStep: float = 0.2
     ):
         super().__init__(
@@ -181,11 +183,14 @@ class ReflectiveAgent(QLearningAgent):
         self.overrideCount = 0
 
         # ToM level 0 model of opponents
-        self.opponentTrackingPoints = {k:0 for k in sorted(opponentTrackingPoints)}
-        self.opponentTrackingStep = opponentTrackingStep
+        self.opponentTrackingPoints = {k:0.0 for k in sorted(opponentTrackingPoints)}
+        self.trackingStep = trackingStep
 
-        # Maintain predictions of other agent behaviour
-        self.tom1Confidence = 0
+        # ToM level 1 model of opponents
+        self.selfTrackingPoints = {k:0 for k in sorted(opponentTrackingPoints)}
+        self.toM1Confidence = 0
+        self.lastToM0Prediction: float | None = None
+        self.lastToM1Prediction: float | None = None
         self.confidenceStep = confidenceStep
         
     def getActionWithReflection(self, state: PublicGoodsState, publicGood):
@@ -235,7 +240,12 @@ class ReflectiveAgent(QLearningAgent):
         Returns: True if override, False to approve
         '''
 
-        opponent_prediction = self._predictOpponentAction(state)
+        opponent_prediction = self._predictToM1Action(
+            selfTrackingPoints=self.selfTrackingPoints,
+            oppTrackingPoints=self.opponentTrackingPoints,
+            state=state,
+            confidence=self.toM1Confidence
+        )
         
         isUnsustainable = state.goodsLevel - (state.usageRates[proposedAction] + opponent_prediction) < self.sustainabilityThreshold
         
@@ -245,29 +255,42 @@ class ReflectiveAgent(QLearningAgent):
         
         return shouldOverride
 
-    def _predictOpponentAction(self, state: PublicGoodsState) -> float:
+
+    def _predictToM0Action(self, trackingPoints: dict[float: float], goodsLevel: float) -> float:
         '''
-        Predict the combined action of the other agents
+        Given trackingPoints as a subintentional model of an agents actions,
+        predict the consumption of that agent this round using level 0 ToM
         '''
         # Find which two tracked points the goodsLevel falls between
-        trackedPoints = sorted(self.opponentTrackingPoints)
-        currentPoolLevel = state.goodsLevel
+        trackedPoints = sorted(trackingPoints)
 
-        if trackedPoints[0] > currentPoolLevel:
-            return self.opponentTrackingPoints[trackedPoints[0]] # If goods level below all tracked, return lowest tracked value
+        if trackedPoints[0] > goodsLevel:
+            return trackingPoints[trackedPoints[0]] # If goods level below all tracked, return lowest tracked value
         else:
             point_idx = 0
             while (point_idx := point_idx + 1) < len(trackedPoints):
-                if trackedPoints[point_idx] > currentPoolLevel:
+                if trackedPoints[point_idx] > goodsLevel:
                     lower_point = trackedPoints[point_idx-1]
                     upper_point = trackedPoints[point_idx]
                     break
             else: # If the while loop finished without breaking
-                return self.opponentTrackingPoints[trackedPoints[-1]] # If goods level above all tracked, return highest tracked value
+                return trackingPoints[trackedPoints[-1]] # If goods level above all tracked, return highest tracked value
 
-        lower_action, upper_action = self.opponentTrackingPoints[lower_point], self.opponentTrackingPoints[upper_point]
-        weightingToLow = (currentPoolLevel - lower_point)/(upper_point - lower_point)
-        return self.opponentTrackingPoints[lower_point] + weightingToLow*(upper_action-lower_action)
+        lower_action, upper_action = trackingPoints[lower_point], trackingPoints[upper_point]
+        weightingToLow = (goodsLevel - lower_point)/(upper_point - lower_point)
+        return trackingPoints[lower_point] + weightingToLow*(upper_action-lower_action)
+
+
+    def _predictToM1Action(self, selfTrackingPoints: dict[float, float], oppTrackingPoints: dict[float, float], state: PublicGoodsState, confidence: float) -> float:
+        toM0PredictionOfOpp = self._predictToM0Action(oppTrackingPoints, state.goodsLevel)
+        toM0PredictionOfSelf = self._predictToM0Action(selfTrackingPoints, state.goodsLevel)
+        mockToM1State = copy(state)
+        mockToM1State.goodsLevel -= toM0PredictionOfSelf
+        toM1PredictionOfOppAction = self.getAction(mockToM1State, record_history=False)
+        toM1PredictionOfOppTotal = state.usageRates[toM1PredictionOfOppAction] * (state.nAgents-1)
+        weightedToM1Prediction = toM0PredictionOfOpp + confidence*(toM1PredictionOfOppTotal - toM0PredictionOfOpp)
+        return weightedToM1Prediction
+
 
     @override
     def update(self, state: PublicGoodsState, action: AgentActions, reward, nextState: PublicGoodsState):
@@ -277,11 +300,34 @@ class ReflectiveAgent(QLearningAgent):
 
     def _updateOpponentPrediction(self, state: PublicGoodsState, action: AgentActions, new_state: PublicGoodsState):
         total_usage = new_state.lastConsumption
-        opponent_usage = total_usage - state.usageRates[action]
         previous_level = state.goodsLevel
+        self_usage = state.usageRates[action]
+        opponent_usage = total_usage - self_usage
 
+        self._updateSubIntentionalPredictionModel(
+            trackingPoints=self.opponentTrackingPoints,
+            previous_level=previous_level,
+            usage=opponent_usage,
+            trackingStep=self.trackingStep
+        )
+        self._updateSubIntentionalPredictionModel(
+            trackingPoints=self.selfTrackingPoints,
+            previous_level=previous_level,
+            usage=self_usage,
+            trackingStep = self.trackingStep
+        )
+        self._updateToMConfidence(opponentUsage=opponent_usage)
+
+
+    def _updateSubIntentionalPredictionModel(
+            self,
+            trackingPoints: dict[float,float],
+            previous_level: float,
+            usage: float,
+            trackingStep: float
+        ):
         # Identify which tracked points to update
-        tracked_points = sorted(self.opponentTrackingPoints)
+        tracked_points = sorted(trackingPoints)
         extreme = False
         if tracked_points[0] > previous_level:
             extreme = True
@@ -299,15 +345,27 @@ class ReflectiveAgent(QLearningAgent):
 
         # Update tracked points
         if extreme is False:
-            lower_action, upper_action = self.opponentTrackingPoints[lower_point], self.opponentTrackingPoints[upper_point]
-            lower_error = ((previous_level - lower_point)/(upper_point - lower_point)) * (opponent_usage - lower_action)
-            upper_error = ((upper_point - previous_level)/(upper_point - lower_point)) * (opponent_usage - upper_action)
-            self.opponentTrackingPoints[lower_point] += self.opponentTrackingStep * lower_error
-            self.opponentTrackingPoints[upper_point] += self.opponentTrackingStep * upper_error
+            lower_action, upper_action = trackingPoints[lower_point], trackingPoints[upper_point]
+            lower_error = ((previous_level - lower_point)/(upper_point - lower_point)) * (usage - lower_action)
+            upper_error = ((upper_point - previous_level)/(upper_point - lower_point)) * (usage - upper_action)
+            trackingPoints[lower_point] += trackingStep * lower_error
+            trackingPoints[upper_point] += trackingStep * upper_error
         else:
-            extreme_action = self.opponentTrackingPoints[extreme_point]
-            extreme_error = opponent_usage - extreme_action
-            self.opponentTrackingPoints[extreme_point] += self.opponentTrackingStep * extreme_error
+            extreme_action = trackingPoints[extreme_point]
+            extreme_error = usage - extreme_action
+            trackingPoints[extreme_point] += trackingStep * extreme_error
+
+
+    def _updateToMConfidence(self, opponentUsage: float):
+        if (tom0 := self.lastToM0Prediction) is not None and (tom1 := self.lastToM1Prediction) is not None:
+            if tom0 != tom1:
+                target = (opponentUsage - tom0)/(tom1 - tom0)
+                if target > 1:
+                    target = 1
+                elif target < 0:
+                    target = 0
+                self.toM1Confidence += self.confidenceStep * (target - self.toM1Confidence)
+
 
     def getInterventionRate(self, window = 100):
         '''
